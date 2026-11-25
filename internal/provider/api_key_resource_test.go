@@ -86,6 +86,42 @@ func TestAPIKeyResource_recreatedWhenDeletedOutsideTerraform(t *testing.T) {
 	})
 }
 
+func TestAPIKeyResource_rateLimitEqualToTeamLimit(t *testing.T) {
+	fake := newFakeExa(t, false)
+	fake.teamLimit = 50
+	tg := fake.target()
+	dropped := regexp.MustCompile(`equal\s+to\s+the\s+team's\s+limit`)
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: tg.factories,
+		CheckDestroy:             checkAPIKeysDestroyed(tg.client),
+		Steps: []resource.TestStep{
+			{
+				Config:      apiKeyConfig("tf-acc-team-limit", "rate_limit = 50"),
+				ExpectError: dropped,
+			},
+			{
+				PreConfig: func() {
+					fake.mu.Lock()
+					defer fake.mu.Unlock()
+					if len(fake.keys) != 0 {
+						t.Fatalf("the key created with the dropped rate limit was not deleted")
+					}
+				},
+				Config: apiKeyConfig("tf-acc-team-limit", "rate_limit = 5"),
+				Check:  resource.TestCheckResourceAttr("exa_api_key.test", "rate_limit", "5"),
+			},
+			{
+				Config:      apiKeyConfig("tf-acc-team-limit", "rate_limit = 50"),
+				ExpectError: dropped,
+			},
+			{
+				Config: apiKeyConfig("tf-acc-team-limit", ""),
+				Check:  resource.TestCheckNoResourceAttr("exa_api_key.test", "rate_limit"),
+			},
+		},
+	})
+}
+
 func TestAPIKeyResource_rejectsNonPositiveRateLimit(t *testing.T) {
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: newFakeExa(t, false).target().factories,

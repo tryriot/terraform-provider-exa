@@ -18,11 +18,12 @@ import (
 
 // fakeExa mimics the Team Management API as observed on the real one.
 type fakeExa struct {
-	mu      sync.Mutex
-	url     string
-	budgets bool
-	seq     int
-	keys    map[string]*fakeKey
+	mu        sync.Mutex
+	url       string
+	budgets   bool
+	teamLimit int64
+	seq       int
+	keys      map[string]*fakeKey
 }
 
 type fakeKey struct {
@@ -141,11 +142,23 @@ func (f *fakeExa) apply(w http.ResponseWriter, r *http.Request, k *fakeKey) bool
 		return false
 	}
 
+	var limit *int64
+	if hasRateLimit {
+		limit = decodeNullableInt(rateLimit)
+		if f.teamLimit > 0 && limit != nil && *limit > f.teamLimit {
+			writeJSON(w, http.StatusBadRequest, errorBody(fmt.Sprintf("Rate limit cannot exceed team's limit of %d QPS", f.teamLimit)))
+			return false
+		}
+		if limit != nil && *limit == f.teamLimit {
+			limit = nil
+		}
+	}
+
 	if hasBudget {
 		k.budgetCents = decodeNullableInt(budget)
 	}
 	if hasRateLimit {
-		k.rateLimit = decodeNullableInt(rateLimit)
+		k.rateLimit = limit
 	}
 	if name, ok := body["name"]; ok {
 		_ = json.Unmarshal(name, &k.name)
