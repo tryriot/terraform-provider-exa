@@ -1,0 +1,6 @@
+# Files Renovate updates
+go.mod             @tryriot/ops
+go.sum             @tryriot/ops
+mise.toml          @tryriot/ops
+renovate.json      @tryriot/ops
+.github/workflows/ @tryriot/ops
