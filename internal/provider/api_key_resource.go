@@ -68,7 +68,7 @@ func (r *apiKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:            true,
 			},
 			"rate_limit": schema.Int64Attribute{
-				MarkdownDescription: "Requests per second allowed for the key. Leave it out for no key-specific limit. " +
+				MarkdownDescription: "Requests per second allowed for the key, below the team's limit: Exa drops a value equal to it. Leave it out to use the team's limit. " +
 					"Exa cannot remove a rate limit from an existing key, so removing this attribute replaces the key, which gets a new secret.",
 				Optional:   true,
 				Validators: []validator.Int64{int64validator.AtLeast(1)},
@@ -174,6 +174,17 @@ func (r *apiKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	if !plan.RateLimit.IsNull() && key.RateLimit == nil {
+		detail := droppedRateLimitDetail(plan.RateLimit)
+		if err := r.client.DeleteAPIKey(ctx, key.PublicID); err != nil && !exa.IsNotFound(err) {
+			plan.fill(key)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			detail += " Deleting the key failed too: " + err.Error()
+		}
+		resp.Diagnostics.AddError("Exa dropped the rate limit", detail)
+		return
+	}
+
 	plan.fill(key)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -227,16 +238,18 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 		plan.fill(key)
+		if update.RateLimit != nil && key.RateLimit == nil {
+			saved := withoutRotation(plan, state)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &saved)...)
+			resp.Diagnostics.AddError("Exa dropped the rate limit", droppedRateLimitDetail(types.Int64PointerValue(update.RateLimit)))
+			return
+		}
 	}
 
 	if !plan.Keepers.Equal(state.Keepers) {
 		key, err := r.client.RotateAPIKey(ctx, state.ID.ValueString(), plan.RotationGracePeriodSeconds.ValueInt64())
 		if err != nil {
-			// Keep the old triggers so the next apply retries the rotation.
-			saved := plan
-			saved.Keepers = state.Keepers
-			saved.Secret = state.Secret
-			saved.PreviousSecretExpiresAt = state.PreviousSecretExpiresAt
+			saved := withoutRotation(plan, state)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &saved)...)
 			resp.Diagnostics.AddError("Unable to rotate Exa API key", rotateErrorDetail(err, state))
 			return
@@ -251,6 +264,19 @@ func (r *apiKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		plan.PreviousSecretExpiresAt = state.PreviousSecretExpiresAt
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// withoutRotation keeps the old triggers so the next apply retries the rotation.
+func withoutRotation(plan, state apiKeyModel) apiKeyModel {
+	plan.Keepers = state.Keepers
+	plan.Secret = state.Secret
+	plan.PreviousSecretExpiresAt = state.PreviousSecretExpiresAt
+	return plan
+}
+
+func droppedRateLimitDetail(rateLimit types.Int64) string {
+	return fmt.Sprintf("Exa returned the key without rate_limit = %d, which it does for a value equal to the team's limit. "+
+		"Leave rate_limit out to use the team's limit, or set it lower.", rateLimit.ValueInt64())
 }
 
 func rotateErrorDetail(err error, state apiKeyModel) string {

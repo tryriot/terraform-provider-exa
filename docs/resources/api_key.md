@@ -43,7 +43,7 @@ resource "exa_api_key" "crawler" {
 
 - `budget_cents` (Number) Spending budget for the key in the team's current billing period, in cents. It resets each billing period. No budget by default, and removing it removes the budget. Requires the API key budgets feature on the Exa team: without it, Exa rejects the request.
 - `keepers` (Map of String) Values that rotate the key's secret when they change, such as the `id` of a `time_rotating`. Unlike `keepers` in other providers, a change doesn't replace the key: the secret rotates in place, the key keeps its public ID (`id`) and usage history, and the old secret keeps working for `rotation_grace_period_seconds`.
-- `rate_limit` (Number) Requests per second allowed for the key. Leave it out for no key-specific limit. Exa cannot remove a rate limit from an existing key, so removing this attribute replaces the key, which gets a new secret.
+- `rate_limit` (Number) Requests per second allowed for the key, below the team's limit: Exa drops a value equal to it. Leave it out to use the team's limit. Exa cannot remove a rate limit from an existing key, so removing this attribute replaces the key, which gets a new secret.
 - `rotation_grace_period_seconds` (Number) How long the old secret keeps working after a rotation, in seconds, at most 90 days. 0 revokes it immediately. Required with `keepers`, no default. Exa refuses to rotate again before it expires.
 
 ### Read-Only
